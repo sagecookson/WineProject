@@ -1,0 +1,840 @@
+---
+title: "Wine Quality"
+author: "Penny Cookson"
+date: "28/12/2021"
+output:
+  pdf_document: 
+  toc: true    
+  html_document:
+    df_print: paged
+---
+```{css, echo=FALSE}
+h1 {
+  text-align: center;
+  color: MidnightBlue;
+  font-weight: bold;
+}
+
+h3 {
+  color: CadetBlue;
+  font-weight: bold;
+}
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+
+```{r load-libraries, message = FALSE, warning = FALSE}
+#initialise libaries
+
+#if the required libraries are not already installed then install them
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(readr)) install.packages("readr", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(randomForest)) install.packages("randomForest", repos = "http://cran.us.r-project.org")
+if(!require(gridExtra)) install.packages("gridExtra", repos = "http://cran.us.r-project.org")
+
+
+#load the libraries
+library(tidyverse)
+library(readr)
+library(caret)
+library(data.table)
+library(randomForest)
+library(gridExtra)
+```
+
+
+```{r load-data , message = FALSE, warning = FALSE}
+#Wine Quality Data Set
+#P. Cortez, A. Cerdeira, F. Almeida, T. Matos and J. Reis.
+#Modeling wine preferences by data mining from physicochemical properties. In Decision Support Systems, Elsevier, 47(4):547-553, 2009.
+
+#download the files to a local drive
+url <-  "https://archive.ics.uci.edu/ml/machine-learning-databases/wine-quality/winequality-red.csv"
+download.file(url,"winequality-red.csv")
+
+url <-  "https://archive.ics.uci.edu/ml/machine-learning-databases/wine-quality/winequality.names"
+download.file(url,"winequality.names")
+
+#load the local file into an R object
+red <- read_csv2("winequality-red.csv", show_col_types = FALSE)  
+
+```
+
+## Executive Summary
+
+### Introduction
+This report documents an analysis of wine quality data, describes the methodology used to create a quality prediction model, and reports on the results obtained.
+
+The data is sourced from https://archive.ics.uci.edu/ml/machine-learning-databases which provides data sets for study purposes. The data set used was created by Paulo Cortez (Univ. Minho), Antonio Cerdeira, Fernando Almeida, Telmo Matos and Jose Reis (CVRVV) @ 2009 (1).
+
+The wine attributes are physical and chemical properties, and the quality is a rating provided by wine experts, with each wine subject to at least three expert evaluations.
+
+The aim of the analysis is to provide a prediction for a wine's quality given its physical and chemical properties.  This could  be very useful to a restaurant's wine buyer that does not have access to a wine expert.
+
+Data is available for both red and white wines.  This analysis was restricted to the red wine data.  The wine is a red variant of the Portuguese "Vinho Verde" wine.
+
+### Key Steps
+The following steps were performed:
+
+1. Data loading  
+Data was loaded from the given source.
+
+2. Data quality checking  
+  Quality checking included empty and invalid values.
+
+3. Data exploration and visualisation  
+  Visualisation of data was used to evaluate the attributes which could be used to predict quality.  
+  
+4. Model creation and evaluation.  
+   The initial model used the whole data set.  Random Forest, K-Means and Support Vector Machine models were used to predict quality.  
+     
+   The visual analysis indicated that outliers may affect the results and the training and prediction for some models were performed after stripping outliers.
+     
+
+5. Final model evaluation    
+  All models were evaluated against the test data set and the final model selected.
+
+
+
+### Results Summary
+The data is not balanced and has few values for very low and high quality wines.  There are no wines at all with a quality rating of 0-2 , or 9-10.  Prediction for wines in the mid  quality was accurate, however it was not possible to positively predict wines at the low quality levels of 3 and 4.  The best prediction model was a Random Forest which provided an overall accuracy of 0.7236025.  Combining the Random Forest with other models did not improve the result.
+
+There were a few instances of distant outliers which were removed before training some models.   Not all the attributes were useful and those with less effect were ignored.
+
+It is recommended that the analysis be repeated with more data.
+
+***  
+
+
+## Analysis
+### Data Source 
+The data in the form of a csv file was downloaded and the local file loaded into R.  
+Two minor data errors were corrected ,and the data types of the columns were changed to numbers for all the attributes and a factor for the target (quality).
+
+```{r fixcsvdata, message = FALSE}
+# correct the total sulfur dioxide for rows 1296 and 1297
+# mapping was col_double() rather than col_number() so the values have been set to NA and need ot be corrected.
+red[1296,"total sulfur dioxide"] <- 77.5
+red[1297,"total sulfur dioxide"] <- 77.5
+```
+
+```{r fixcolnames, message = FALSE}
+#Tidy up the column names
+#The column names are set to use camel case
+colnames(red) <- c("fixedAcidity","volatileAcidity","citricAcid","residualSugar","chlorides","freeSulfurDioxide","totalSulfurDioxide","density","pH","sulphates","alcohol","quality")
+```
+
+```{r fixdatatypes, message = FALSE}
+#convert non numeric attributes to a numeric data type
+#some of them have been set to character by the import.\
+red<- red %>% mutate(volatileAcidity = as.numeric(volatileAcidity))
+red<- red %>% mutate(citricAcid = as.numeric(citricAcid))
+red<- red %>% mutate(chlorides = as.numeric(chlorides))
+red<- red %>% mutate(density = as.numeric(density))
+red<- red %>% mutate(sulphates = as.numeric(sulphates))
+
+#convert the quality to an ordered factor (this is going to be the target we predict)
+red <- red %>% mutate(quality = as.factor(quality))
+```
+
+
+### Data Quality Checking/Cleaning
+#### Structure 
+
+The structure of the data , following these fixes is as follows:
+```{r str}
+#check the structure of the data set
+str(red)
+```
+
+#### Data Quality 
+
+
+```{r err}
+#data quality checks
+#check for null and is.na values, these should all return 0
+#check the red data set, adding all the errors into the variable error
+#then print error
+errors <- nrow(red %>% filter(is.na(fixedAcidity))) +
+nrow(red %>% filter(is.null(fixedAcidity)))+
+nrow(red %>% filter(is.na(volatileAcidity)))+
+nrow(red %>% filter(is.null(volatileAcidity)))+
+nrow(red %>% filter(is.na(citricAcid)))+
+nrow(red %>% filter(is.null(citricAcid)))+
+nrow(red %>% filter(is.na(residualSugar)))+
+nrow(red %>% filter(is.null(residualSugar)))+
+nrow(red %>% filter(is.na(chlorides)))+
+nrow(red %>% filter(is.null(chlorides)))+
+nrow(red %>% filter(is.na(freeSulfurDioxide)))+
+nrow(red %>% filter(is.null(freeSulfurDioxide)))+
+nrow(red %>% filter(is.na(totalSulfurDioxide)))+
+nrow(red %>% filter(is.null(totalSulfurDioxide)))+
+nrow(red %>% filter(is.na(density)))+
+nrow(red %>% filter(is.null(density)))+
+nrow(red %>% filter(is.na(pH)))+
+nrow(red %>% filter(is.null(pH)))+
+nrow(red %>% filter(is.na(sulphates)))+
+nrow(red %>% filter(is.null(sulphates)))+
+nrow(red %>% filter(is.na(alcohol)))+
+nrow(red %>% filter(is.null(alcohol)))+
+nrow(red %>% filter(is.na(quality)))+
+nrow(red %>% filter(is.null(quality)))
+```
+
+There are  `r errors` rows with invalid or empty values.
+
+#### Counts 
+There are `r nrow(red)` rows of data in the red wine data set.
+
+In order to assess how balanced the data is, plot the number of wines for each level of quality:
+```{r hist, out.width="80%"}
+#histogram of quality
+red %>%
+  ggplot(aes(quality,fill=quality)) +
+  geom_bar() +
+  xlab("Quality") +
+  ggtitle("Distribution of Quality") 
+```
+
+The plot above shows that the data is not balanced.  It contains few records where the wine is rated very highly or very low.  This is to be expected since most wine would be likely to fall within an acceptable quality range.  There are no wines at all at the 0,1,2 ,9,10 quality levels.
+
+
+### Exploration and Visualisation
+The data was investigated graphically.  Each attribute was plotted against quality.  Since many of the attributes have outliers, each attribute is plotted with and without the outliers.
+
+(The plots have been included in order of attribute relevance determined during the Random Forest model training.)
+
+```{r alcohol, out.width="80%", echo=FALSE}
+#alcohol
+#box plot including the outliers
+p <- red %>%
+  ggplot(aes(alcohol, quality,fill=quality)) +
+  geom_boxplot() +
+  ylab("") + 
+  xlab("Alcohol Content") +
+  theme(legend.position = "none") +      
+  ggtitle("Original Data") 
+
+#save the outliers from the boxplot function into a variable so they can be removed from the data set. 
+alcoholOutliers <- boxplot(red$alcohol , plot=FALSE)$out
+#remove the outliers from the data
+rednoOut <- red[-which(red$alcohol %in% alcoholOutliers),]
+
+#box plot excluding the outliers
+pno <- rednoOut %>%
+  ggplot(aes(alcohol, quality, fill=quality)) +
+  geom_boxplot() +
+  ylab("Quality") + 
+  xlab("Alcohol Content") +
+  ggtitle("Excluding Outliers") 
+
+#combine the 2 plots in a 2 X 1 grid
+grid.arrange(p, pno, ncol = 2, nrow = 1, top = "Quality by Alcohol Content")
+
+```
+
+
+The alcohol data is skewed by the existence of a few wines with very high alcohol content.  Since these wines do not have a very high or low quality rating, the outliers are unlikely to contribute to the model and will be removed before model training.  
+Wines with a high alcohol content are generally rated higher than those with a low alcohol content.  The alcohol content is expected to be a good indicator of high quality wines.
+
+```{r volatileAcidity, out.width="80%", echo=FALSE}
+#volatileAcidity
+#box plot including the outliers
+p <- red %>%
+  ggplot(aes(volatileAcidity, quality,fill=quality)) +
+  geom_boxplot() +
+  ylab("") + 
+  xlab("Volatile Acidity") +
+  theme(legend.position = "none")+  
+  ggtitle("Original Data") 
+
+#save the outliers from the boxplot function into a variable so they can be removed from the data set. 
+volatileAcidityOutliers <- boxplot(red$volatileAcidity, plot=FALSE)$out
+#remove the outliers from the data
+rednoOut <- red[-which(red$volatileAcidity %in% volatileAcidityOutliers),]
+
+#box plot excluding the outliers
+pno <- rednoOut %>%
+  ggplot(aes(volatileAcidity, quality, fill=quality)) +
+  geom_boxplot() +
+  ylab("Quality") + 
+  xlab("Volatile Acidity") +
+  ggtitle("Excluding Outliers") 
+
+#combine the 2 plots in a 2 X 1 grid
+grid.arrange(p, pno, ncol = 2, nrow = 1, top = "Quality by Volatile Acidity")
+
+```
+
+There are only a few outliers for Volatile Acidity, and their range is not as extreme as the alcohol content.  The quality of wine decreases as the Volatile Acidity increases, and it is likely that high Volatile Acidity would be a good indicator of a low quality wine.
+
+```{r sulphates, out.width="80%", echo=FALSE}
+#sulphates
+#box plot including the outliers
+p <- red %>%
+  ggplot(aes(sulphates, quality,fill=quality)) +
+  geom_boxplot() +
+  ylab("Quality") + 
+  xlab("Sulphates") +
+  theme(legend.position = "none")+    
+  ggtitle("Original Data") 
+
+#save the outliers from the boxplot function into a variable so they can be removed from the data set. 
+sulphatesOutliers <- boxplot(red$sulphates , plot=FALSE)$out
+#remove the outliers from the data
+rednoOut <- red[-which(red$sulphates %in% sulphatesOutliers),]
+
+#box plot excluding the outliers
+pno <- rednoOut %>%
+  ggplot(aes(sulphates, quality, fill=quality)) +
+  geom_boxplot() +
+  ylab("") + 
+  xlab("Sulphates") +
+  ggtitle("Excluding Outliers") 
+
+#combine the 2 plots in a 2 X 1 grid
+grid.arrange(p, pno, ncol = 2, nrow = 1, top = "Quality by Sulphates")
+```
+
+There are only a few outliers for Sulphates, and their range is again not as extreme as the alcohol content. Wines with a high Sulphates content are generally rated higher than those with a low Sulphates content.  The Sulphates content is expected to be a good indicator of higher quality wines.
+
+
+```{r totalSulfurDioxide, out.width="80%", echo=FALSE}
+#totalSulfurDioxide
+#box plot including the outliers
+p <- red %>%
+  ggplot(aes(totalSulfurDioxide, quality,fill=quality)) +
+  geom_boxplot() +
+  ylab("Quality") + 
+  xlab("Total Sulphur Dioxide") +
+  theme(legend.position = "none")+    
+  ggtitle("Original Data") 
+
+#save the outliers from the boxplot function into a variable so they can be removed from the data set. 
+totalSulfurDioxideOutliers <- boxplot(red$totalSulfurDioxide , plot=FALSE)$out
+#remove the outliers from the data
+rednoOut <- red[-which(red$totalSulfurDioxide %in% totalSulfurDioxideOutliers),]
+
+#box plot excluding the outliers
+pno <- rednoOut %>%
+  ggplot(aes(totalSulfurDioxide, quality, fill=quality)) +
+  geom_boxplot() +
+  ylab("") + 
+  xlab("Total Sulphur Dioxide") +
+  ggtitle("Excluding Outliers") 
+
+#combine the 2 plots in a 2 X 1 grid
+grid.arrange(p, pno, ncol = 2, nrow = 1, top = "Quality by Total Sulphur Dioxide")
+```
+
+There are two outliers for Total Sulphur Dioxide, both of which have a much higher value than the mean. The quality of wines is generally mid range for wines with a higher Total Sulphur Dioxide content.  Wines with a low Total Sulphur Dioxide content are either highly rated or in the low classifications.
+
+
+```{r dens, out.width="80%", echo=FALSE}
+#density
+#box plot including the outliers
+p <- red %>%
+  ggplot(aes(density, quality,fill=quality)) +
+  geom_boxplot() +
+  ylab("Quality") + 
+  xlab("Density") +
+  theme(legend.position = "none") +    
+  ggtitle("Original Data") 
+
+#save the outliers from the boxplot function into a variable so they can be removed from the data set. 
+densityOutliers <- boxplot(red$density , plot=FALSE)$out
+#remove the outliers from the data
+rednoOut <- red[-which(red$density%in%  densityOutliers),]
+
+#box plot excluding the outliers
+pno <- rednoOut %>%
+  ggplot(aes(density, quality, fill=quality)) +
+  geom_boxplot() +
+  ylab("") + 
+  xlab("Density") +
+  ggtitle("Excluding Outliers") 
+
+#combine the 2 plots in a 2 X 1 grid
+grid.arrange(p, pno, ncol = 2, nrow = 1, top = "Quality by Density")
+```
+
+There are a few outliers for density, the values are not as far from the mean as in the alcohol data or Total Sulphur Dioxide data. Wines with a low density are generally rated higher than those with a hugh density content.  
+
+```{r chlorides, out.width="80%", echo=FALSE}
+#chlorides
+#box plot including the outliers
+p <- red %>%
+  ggplot(aes(chlorides, quality,fill=quality)) +
+  geom_boxplot() +
+  ylab("Quality") + 
+  xlab("Chlorides") +
+  theme(legend.position = "none")+    
+  ggtitle("Original Data") 
+
+#save the outliers from the boxplot function into a variable so they can be removed from the data set. 
+chloridesOutliers <- boxplot(red$chlorides , plot=FALSE)$out
+#remove the outliers from the data
+rednoOut <- red[-which(red$chlorides%in%  chloridesOutliers),]
+
+#box plot excluding the outliers
+pno <- rednoOut %>%
+  ggplot(aes(chlorides, quality, fill=quality)) +
+  geom_boxplot() +
+  ylab("") + 
+  xlab("Chlorides") +
+  ggtitle("Excluding Outliers") 
+
+#combine the 2 plots in a 2 X 1 grid
+grid.arrange(p, pno, ncol = 2, nrow = 1, top = "Quality by Chlorides")
+```
+
+The Chlorides data is skewed by the existence of a few wines with very high Chlorides content.  Since these wines do not have a very high or low quality rating, the outliers are unlikely to contribute to the model and will be removed before model training.  
+There is a slight decrease in quality for wines with a higher chlorides content.
+
+```{r fixedAcidity, out.width="80%", echo=FALSE}
+#fixedAcidity
+#box plot including the outliers
+p <- red %>%
+  ggplot(aes(fixedAcidity, quality,fill=quality)) +
+  geom_boxplot() +
+  ylab("Quality") + 
+  xlab("Fixed Acidity") +
+  theme(legend.position = "none") +    
+  ggtitle("Original Data") 
+
+#save the outliers from the boxplot function into a variable so they can be removed from the data set. 
+fixedAcidityOutliers <- boxplot(red$fixedAcidity, plot=FALSE)$out
+#remove the outliers from the data
+rednoOut <- red[-which(red$fixedAcidity%in%  fixedAcidityOutliers),]
+
+#box plot excluding the outliers
+pno <- rednoOut %>%
+  ggplot(aes(fixedAcidity, quality, fill=quality)) +
+  geom_boxplot() +
+  ylab("") + 
+  xlab("Fixed Acidity") +
+  ggtitle("Excluding Outliers") 
+
+#combine the 2 plots in a 2 X 1 grid
+grid.arrange(p, pno, ncol = 2, nrow = 1, top = "Quality by Fixed Acidity")
+```
+
+The Fixed Acidity data is skewed by the existence of a few wines with very low Fixed Acidity.  These outliers occur for all quality levels,  are unlikely to contribute to the model and will be removed before model training.  
+There is a slight decrease in quality for wines with a lower Fixed Acidity content.
+
+
+```{r pH, out.width="80%", echo=FALSE}
+#pH
+#box plot including the outliers
+p <- red %>%
+  ggplot(aes(pH, quality,fill=quality)) +
+  geom_boxplot() +
+  ylab("Quality") + 
+  xlab("PH") +
+  theme(legend.position = "none") +    
+  ggtitle("Original Data") 
+
+#save the outliers from the boxplot function into a variable so they can be removed from the data set. 
+pHOutliers <- boxplot(red$pH, plot=FALSE)$out
+#remove the outliers from the data
+rednoOut <- red[-which(red$pH%in%  pHOutliers),]
+
+#box plot excluding the outliers
+pno <- rednoOut %>%
+  ggplot(aes(pH, quality, fill=quality)) +
+  geom_boxplot() +
+  ylab("") + 
+  xlab("PH") +
+  ggtitle("Excluding Outliers") 
+
+#combine the 2 plots in a 2 X 1 grid
+grid.arrange(p, pno, ncol = 2, nrow = 1, top = "Quality by PH")
+```
+
+The PH data is skewed by the existence of a few wines with very low PH content.  These outliers occur for all quality levels,  are unlikely to contribute to the model and will be removed before model training.  
+There is a slight decrease in quality for wines with a higher PH.
+
+```{r residualSugar, out.width="80%", echo=FALSE}
+#residualSugar
+#box plot including the outliers
+p <- red %>%
+  ggplot(aes(residualSugar, quality,fill=quality)) +
+  geom_boxplot() +
+  ylab("Quality") + 
+  xlab("Residual Sugar") +
+  theme(legend.position = "none") +    
+  ggtitle("Original Data") 
+
+#save the outliers from the boxplot function into a variable so they can be removed from the data set. 
+residualSugarOutliers <- boxplot(red$residualSugar, plot=FALSE)$out
+#remove the outliers from the data
+rednoOut <- red[-which(red$residualSugar %in%  residualSugarOutliers),]
+
+#box plot excluding the outliers
+pno <- rednoOut %>%
+  ggplot(aes(residualSugar, quality, fill=quality)) +
+  geom_boxplot() +
+  ylab("") + 
+  xlab("Residual Sugar") +
+  ggtitle("Excluding Outliers") 
+
+#combine the 2 plots in a 2 X 1 grid
+grid.arrange(p, pno, ncol = 2, nrow = 1, top = "Quality by Residual Sugar")
+```
+
+The Residual Sugar data is skewed by the existence of a few wines with high Residual Sugar content.  These outliers occur for all quality levels.  The Residual Sugar does not appear to provide a good indicator of quality.
+
+
+```{r freeSulfurDioxide, out.width="80%", echo=FALSE}
+#freeSulfurDioxide
+#box plot including the outliers
+p <- red %>%
+  ggplot(aes(freeSulfurDioxide, quality,fill=quality)) +
+  geom_boxplot() +
+  ylab("Quality") + 
+  xlab("Free Sulphur Dioxide") +
+  theme(legend.position = "none") +    
+  ggtitle("Original Data") 
+
+#save the outliers from the boxplot function into a variable so they can be removed from the data set. 
+freeSulfurDioxideOutliers <- boxplot(red$freeSulfurDioxide, plot=FALSE)$out
+#remove the outliers from the data
+rednoOut <- red[-which(red$freeSulfurDioxide %in%  freeSulfurDioxideOutliers),]
+
+#box plot excluding the outliers
+pno <- rednoOut %>%
+  ggplot(aes(freeSulfurDioxide, quality, fill=quality)) +
+  geom_boxplot() +
+  ylab("") + 
+  xlab("Free Sulphur Dioxide") +
+  ggtitle("Excluding Outliers") 
+
+#combine the 2 plots in a 2 X 1 grid
+grid.arrange(p, pno, ncol = 2, nrow = 1, top = "Quality by Free Sulphur Dioxide")
+```
+
+The Free Sulphur Dioxide data is skewed by the existence of a few wines with high Free Sulphuur Dioxide content.  The Free Sulphur Dioxide does not appear to provide a good indicator of quality.  Higher levels are associated with mid range wines.
+
+
+
+## Model Creation and Evaluation  
+### Train and Test data sets
+The data provided was divided into a train data set (80% of the orginal data set), and a test data set (20% of the original data set).  The test data set was used only to provide an evaluation of the models created.
+
+```{r trn}
+# split the data into a test and train data set
+# test set will be 20% of red wine data
+set.seed(1)
+test_index <- createDataPartition(y = red$quality, times = 1, p = 0.2, list = FALSE)
+red_train<- red[-test_index,]
+red_test <- red[test_index,]
+```
+
+There are `r nrow(red_train)` rows in the train set.
+
+There are `r nrow(red_test)` rows in the test set.
+
+List of the number of rows of each quality in the train set
+
+```{r trnset}
+# train set is 80% of red wine data
+#find the number of red wines at each quality in the train set.
+red_train %>% group_by (quality) %>% summarise(number = n()) 
+```
+
+```{r testset}
+# test set is 20% of red wine data
+#find the number of red wines at each quality in the test set.
+red_test %>% group_by (quality) %>% summarise(number = n())
+```
+
+Both data sets include wines with quality in each level between 3 and 8.
+
+### Model 1 - Random Forest
+A Random Forest was used as the first model.  The initial model used all attributes in the data set.  The caret package was allowed to provide the tuning parameters nodesize and mtry.  The resulting best tuning parameters were as follows:
+
+```{r rf-selftune}
+#set a seed so the results are reproducable
+set.seed(1)
+#use the caret package train function and a random forest (rf) method
+fitredrf <- train(quality ~ ., method = "rf", data = red_train)
+#display the resulting tuning parameters
+fitredrf$bestTune
+#nodesize 1 mtry 2
+
+# run the prediction on train set
+predrrf <- predict(fitredrf, red_train)
+
+# display the confusion matrix
+cmrrf <- confusionMatrix(predrrf,red_train$quality)
+cmrrf
+
+#display the overall accuracy
+cmrrf$overall["Accuracy"]
+```
+
+It is assumed that the relatively small number of rows in the data set allow the random forest model to handle all possible combinations and hence the accuracy is 1. 
+
+The tuning parameters were then determined manually.
+First the nodesize was set to 1 and the mtry parameter tuned.  
+
+
+```{r rf-tuneparamsmtry}
+# then try tuning the nodesize and mtry parameters manually.
+# tuning parameters - find mtry (although we expect caret to self tune that)
+# assume a nodesize of 1 (the default for classification)
+# 11 attributes so we try 1 to 11
+# expecting value would be sqrt(num attributes)
+mtry <- seq(1,11,1)
+#set a seed so the results are reproducable
+set.seed(1)
+
+#try values of mtry between 1 and 11 and identify the best accuracy
+acc <- sapply(mtry, function(m){
+  train(quality ~ ., method = "rf", data = red_train,
+        tuneGrid = data.frame(mtry = m),
+        nodesize = 1)$results$Accuracy
+})
+
+#plot the accuracy against the mtry values
+qplot(mtry, acc)
+```
+
+The optimum value of mtry is  `r mtry[which.max(acc)]`.
+
+Then the nodesize parameter is tuned.  
+
+
+```{r rf-tuneparamnodesize}
+#tuning parameters - find nodesize
+#  use the mtry found above
+nodesize <- seq(1,15,1)
+#set a seed so the results are reproducable
+set.seed(1)
+
+#try values of nodesize between 1 and 15 and identify the best accuracy
+acc <- sapply(nodesize, function(n){
+  train(quality ~ ., method = "rf", data = red_train,
+        tuneGrid = data.frame(mtry = 3),
+        nodesize = n)$results$Accuracy
+})
+#plot the accuracy against the nodesize values
+qplot(nodesize, acc)
+
+```
+
+The optimum value of mtry is  `r nodesize[which.max(acc)]`.
+
+These tuning parameters are then used for the random forest model (rather than the self tuning parameters).  As expected the result is the same, however these parameters will be used when running the model on the test data set.   
+
+```{r rf}
+# now use these tuning parameters
+#set a seed so the results are reproducable
+set.seed(1)
+#use the train function of the caret package to train the random forest nodel using the tuning parameters identified
+fitredrf <- train(quality ~ ., method = "rf", data = red_train,
+                    tuneGrid = data.frame(mtry = 3),
+                    nodesize = 3)
+
+# run the prediction on train set
+predrrf <- predict(fitredrf, red_train)
+
+# display the confusion matrix
+cmrrf <- confusionMatrix(predrrf,red_train$quality)
+
+#display the overall accuracy
+cmrrf$overall["Accuracy"]
+
+```
+
+The variable importance is determined from the model.  The following lists variables in order of importance:
+```{r imp}
+#### Consider whether we need all the variables ###############################################
+#find variable importance
+varImp(fitredrf)
+```
+
+Alocohol, Sulphates and Volatile Acidity provide the best indicators of quality.  Residual Sugar and Free Sulphur Dioxide provide little value.
+
+
+### Model 2 - k-nearest neighbours 
+Before training the knn model the outliers identified in the data visualisation section were removed (Alcohol, Sulphur Dioxide, Chlorides, Fixed Acidity, Ph).  Residual Sugar and Free Sulphur Dioxide were ignored as they appear to have minimal value.)
+
+```{r remout}
+ # remove outliers from train set 
+#determine the outliers for each of the attributes below
+#alcohol
+alcoholOutliers <- boxplot(red_train$alcohol , plot=FALSE)$out
+
+#totalSulfurDioxide
+totalSulfurDioxideOutliers <- boxplot(red_train$totalSulfurDioxide , plot=FALSE)$out
+
+#chlorides
+chloridesOutliers <- boxplot(red_train$chlorides , plot=FALSE)$out
+
+#fixedAcidity
+fixedAcidityOutliers <- boxplot( red_train$fixedAcidity, plot=FALSE)$out
+
+#pH
+pHOutliers <- boxplot(red_train$pH, plot=FALSE)$out
+
+#Create a new train set without the outliers
+red_trainno <- red_train[-which(red_train$alcohol %in% alcoholOutliers
+                             | red_train$totalSulfurDioxide %in% totalSulfurDioxideOutliers
+                             | red_train$chlorides %in% chloridesOutliers
+                             | red_train$fixedAcidity %in% fixedAcidityOutliers
+                             | red_train$pH %in% pHOutliers),]
+
+#remove residual Sugar and Free Sulphur Dioxide from the train set
+red_trainno <- red_trainno %>% select(-freeSulfurDioxide,-residualSugar)
+```
+
+
+`r nrow(red_trainno)` rows remain in the train set.
+
+The k-nearest neighbours model was trained on the adjusted train set, (without outliers) and the results on the train set predicted.
+
+```{r knn, warning=FALSE, message=FALSE}
+#train the knn model
+#set a seed so the results are reproducable
+set.seed(1)
+#use the train function of the caret package to train the knn model
+#the data is nornalised first by the preProcess clause
+fitredknn <- train(quality ~ ., method = "knn", preProcess = c("center","scale"), data = red_trainno)
+
+# run the prediction on train set
+predrknn <- predict(fitredknn, red_train)
+
+cmrknn <- confusionMatrix(predrknn,red_train$quality)
+cmrknn
+
+#display the overall accuracy
+cmrknn$overall["Accuracy"]
+#note that warning messages are displayed when red_trainno is used (the data set with outliers removed) rather than red_train
+#it is assumed that this is because some samples do not have all the levels available
+```
+
+
+The high prevalence of classes 5 and 6 impact the results. The model has not been able to predict levels 3 or level 8 quality. Balanced accuracy is > .65 for quality classes 5,6 and 7, but there is insufficient data for the other levels.  
+
+### Model 3 - Support Vector Model
+The SVM model is trained on the adjusted train set, (without outliers) and the results on the train set predicted.
+
+```{r svm}
+#train the svm model
+#set a seed so the results are reproducable
+set.seed(1)
+#use the train function of the caret package to train the svm model
+#the data is nornalised first by the preProcess clause
+fitredsvm <- train(quality ~ ., method = "svmRadial",preProcess = c("center","scale"),  data = red_trainno)
+
+# run the prediction on train set
+predrsvm <- predict(fitredsvm, red_train)
+
+cmrsvm <- confusionMatrix(predrsvm,red_train$quality)
+cmrsvm
+
+#display the overall accuracy
+cmrsvm$overall["Accuracy"]
+```
+
+The high prevalence of classes 5 and 6 impact the results. The model has not been able to predict levels 3,4 or 8 quality. Balanced accuracy is > .64 for quality classes 5,6 and 7, but there is insufficient data for the other levels.  
+
+### Results
+
+
+### Model 1 - Random Forest Results (Test Data Set)
+The model was evaluated against the test data.
+
+```{r rftest}
+# run the random forest prediction on the test set
+predrrf <- predict(fitredrf, red_test)
+
+# display the confusion matrix
+cmrrf <- confusionMatrix(predrrf,red_test$quality)
+cmrrf
+
+#display the overall accuracy
+cmrrf$overall["Accuracy"]
+
+```
+
+The overall accuracy was   `r cmrrf$overall["Accuracy"]`.
+
+The high prevalence of classes 5 and 6 impact the results. The model has not been able to predict levels 3 or 4.  It has predicted level 8, but only with 25% sensitivity. Balanced accuracy is > .76 for quality classes 5,6 and 7, but there is insufficient data for the other levels. 
+
+This model would be expected to differentiate between wines of mid quality, assigning them a quality of between 5 and 7.  This covers most of the wines in this data set.
+
+
+### Model 2 - k-nearest Neighbours Results (Test Data Set)  
+
+```{r knntest}
+# run the knn prediction on the test set
+predrknn <- predict(fitredknn, red_test)
+
+cmrknn <- confusionMatrix(predrknn,red_test$quality)
+cmrknn
+
+#display the overall accuracy
+cmrknn$overall["Accuracy"]
+```
+
+
+The overall accuracy was   `r cmrknn$overall["Accuracy"]`.
+
+The high prevalence of classes 5 and 6 impact the results. The model has not been able to predict levels 3,4 or 8. Balanced accuracy is > .62 for quality classes 5,6 and 7, but there is insufficient data for the other levels.  
+
+Combining the Random Forest with this model did not improve results and this model has been discarded for this data set.
+
+### Model 3 - Support Vector Model Results (Test Data Set)  
+
+```{r svmtest}
+# run the svm prediction on the test set
+predrsvm <- predict(fitredsvm, red_test)
+
+cmrsvm <- confusionMatrix(predrsvm,red_test$quality)
+cmrsvm
+
+#display the overall accuracy
+cmrsvm$overall["Accuracy"]
+```
+
+The overall accuracy was   `r cmrsvm$overall["Accuracy"]`.
+
+The high prevalence of classes 5 and 6 impact the results. The model has not been able to predict levels 3,4 or 8 quality. Balanced accuracy is > .60 for quality classes 5,6 and 7, but there is insufficient data for the other levels.
+
+Combining the Random Forest with this model did not improve results and this model has been discarded for this data set.
+
+## Conclusion
+### Findings
+The model provides a good prediction for the quality of mid range wines.  The main indicators were high alcohol content and low volatile acidity.
+
+The Random Forest model was the chosen model since combining it with the other models did not improve the results.
+
+This model would be expected to differentiate between wines of mid quality, assigning them a quality of between 5 and 7.  This covers most of the wines in this data set.  A more balanced data set would be required to create a model which could handle very high and low quality wines.
+
+### Limitations
+The prevalence of mid range wines makes it difficult to obtain valid results for low and high quality wines.
+It would also be expected that rating a wine as very high quality is a more subjective decision, based on personal preference and may be hard to predict.
+
+
+### Recommended Future Work
+Future studies including more data would be valuable.  In addition it would be interesting to extend the investigation to wines of various types, and assess whether the model remains valid.  Some outlier identification techniques could be investigated to identify the very low quality wines.
+
+It is likely that some of the attributes are related, and a further analysis of the relationship between attributes, and into the relative contribution of the attributes could result in an effective model with fewer measurements of the wine required.
+
+
+## Technical Details  
+The code takes around 10 minutes to run.  It was executed on a MacBook Pro with 32G memory.
+
+
+## References  
+(1) P. Cortez, A. Cerdeira, F. Almeida, T. Matos and J. Reis.
+_Modeling wine preferences by data mining from physicochemical properties_. In Decision Support Systems, Elsevier, 47(4):547-553, 2009
+
+

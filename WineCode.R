@@ -839,6 +839,6 @@ cmr$overall["Accuracy"]
 
 #note that the accuracy is not improved over just using the ransom Forest on all data.
 
-# SECTION 7 -END: # combine models of different types
+# SECTION 8 -END: # combine models of different types
 ###################################################################################
 
